@@ -1,90 +1,32 @@
-import { auth } from "@clerk/nextjs/server";
-import { ChartBar, Code, Export } from "@phosphor-icons/react/ssr";
-import Link from "next/link";
-import { redirect } from "next/navigation";
+import { auth } from "@clerk/nextjs/server"
+import { redirect } from "next/navigation"
 
-import { ExportAction } from "@/components/billing/export-action";
-import { SubscriptionStatus } from "@/components/billing/subscription-status";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { PLAN_NAME, isSubscribed } from "@/lib/billing";
+import { CrosscheckApp } from "@/features/crosscheck/crosscheck-app"
+import { isSubscribed } from "@/lib/billing"
 
-export default async function DashboardPage() {
-  const { has } = await auth.protect();
+function isDemoParam(demo: string | string[] | undefined) {
+  return demo === "1" || (Array.isArray(demo) && demo.includes("1"))
+}
 
-  if (!isSubscribed(has)) {
-    redirect("/pricing");
+export default async function DashboardPage({
+  searchParams,
+}: PageProps<"/dashboard">) {
+  const params = await searchParams
+  const demoRequested = isDemoParam(params.demo)
+  const { isAuthenticated, has } = await auth()
+  const subscribed = Boolean(isAuthenticated && isSubscribed(has))
+
+  if (subscribed) {
+    return <CrosscheckApp demo={false} />
   }
 
-  return (
-    <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-6 py-12">
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <h1 className="font-heading text-3xl font-semibold tracking-tight">
-            Dashboard
-          </h1>
-          <Badge>{PLAN_NAME}</Badge>
-        </div>
-        <SubscriptionStatus />
-      </div>
+  if (demoRequested) {
+    return <CrosscheckApp demo />
+  }
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ChartBar />
-              Analytics
-            </CardTitle>
-            <CardDescription>Included with {PLAN_NAME}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p>Analytics is included in your subscription.</p>
-          </CardContent>
-        </Card>
+  if (!isAuthenticated) {
+    redirect("/sign-in")
+  }
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Export />
-              Export
-            </CardTitle>
-            <CardDescription>Included with {PLAN_NAME}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ExportAction enabled />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Code />
-              API access
-            </CardTitle>
-            <CardDescription>Included with {PLAN_NAME}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p>API access is included in your subscription.</p>
-          </CardContent>
-          <CardFooter>
-            <Button
-              variant="outline"
-              render={<Link href="/account" />}
-              nativeButton={false}
-            >
-              Manage billing
-            </Button>
-          </CardFooter>
-        </Card>
-      </div>
-    </main>
-  );
+  redirect("/pricing")
 }

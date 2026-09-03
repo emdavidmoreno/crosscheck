@@ -25,7 +25,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Crosscheck Sheet",
-  description: "Crosscheck Sheet",
+  description:
+    "Cruzá dos archivos de Excel con las reglas que definas. El cálculo corre en tu navegador.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
