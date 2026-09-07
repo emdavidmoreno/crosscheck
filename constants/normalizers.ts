@@ -23,3 +23,4 @@ export const NORMALIZERS: Record<
   },
   numeric: { label: "Número", fn: (v) => String(normNumeric(v) ?? "") },
 }
+
