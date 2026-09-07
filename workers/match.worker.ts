@@ -11,6 +11,7 @@ export type MatchWorkerRequest = {
   maxResultRows?: number
 }
 
+
 export type MatchWorkerResponse =
   | { type: "progress"; p: number }
   | { type: "done"; result: MatchResult }
