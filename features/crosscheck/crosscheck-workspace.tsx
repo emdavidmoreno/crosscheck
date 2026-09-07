@@ -95,7 +95,7 @@ export function CrosscheckWorkspace({
   const [fields, setFields] = useState<MatchField[]>([])
   const [combinator, setCombinator] = useState<Combinator>("OR")
   const [outCols, setOutCols] = useState<OutputColumn[]>([])
-  const [groupBy, setGroupBy] = useState("")
+  const [groupBy, setGroupBy] = useState<string[]>([])
   const [search, setSearch] = useState("")
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const [modal, setModal] = useState<"library" | "import" | "export" | null>(
@@ -345,7 +345,7 @@ export function CrosscheckWorkspace({
               isKey,
             })
           ),
-          output: { columns: outCols, groupBy: groupBy ? [groupBy] : [] },
+          output: { columns: outCols, groupBy },
         },
         null,
         2
@@ -379,7 +379,14 @@ export function CrosscheckWorkspace({
     setOutCols(
       demo ? nextOut.slice(0, DEMO_LIMITS.maxOutputColumns) : nextOut
     )
-    setGroupBy(j.output?.groupBy?.[0] || "")
+    const rawGroupBy = j.output?.groupBy
+    setGroupBy(
+      Array.isArray(rawGroupBy)
+        ? rawGroupBy.filter((x): x is string => typeof x === "string")
+        : typeof rawGroupBy === "string"
+          ? [rawGroupBy]
+          : []
+    )
     clearResults()
     setModal(null)
     setImportText("")
@@ -478,20 +485,27 @@ export function CrosscheckWorkspace({
   }, [flat, filters, search])
 
   const grouped = useMemo(() => {
-    if (!groupBy) return [{ key: null as string | null, rows: visible }]
-    const gi = outCols.findIndex(
-      (c) => c.source + "|" + c.column === groupBy
-    )
-    if (gi < 0) return [{ key: null as string | null, rows: visible }]
-    const m = new Map<string, FlatReportRow[]>()
+    if (!groupBy.length) return [{ key: null as string | null, rows: visible }]
+    const indexed = groupBy
+      .map((id) => ({
+        i: outCols.findIndex((c) => `${c.source}|${c.column}` === id),
+      }))
+      .filter((x) => x.i >= 0)
+    if (!indexed.length) return [{ key: null as string | null, rows: visible }]
+    const m = new Map<string, { key: string; rows: FlatReportRow[] }>()
     for (const r of visible) {
-      const k = S(r.values[gi]) || "(vacío)"
-      if (!m.has(k)) m.set(k, [])
-      m.get(k)!.push(r)
+      const parts = indexed.map(({ i }) => S(r.values[i]) || "(vacío)")
+      const id = JSON.stringify(parts)
+      const label = indexed
+        .map(({ i }, idx) => `${outCols[i]?.column}: ${parts[idx]}`)
+        .join(" · ")
+      const bucket = m.get(id)
+      if (bucket) bucket.rows.push(r)
+      else m.set(id, { key: label, rows: [r] })
     }
-    return [...m.entries()]
-      .sort((a, b) => b[1].length - a[1].length)
-      .map(([key, rows]) => ({ key, rows }))
+    return [...m.values()]
+      .sort((a, b) => b.rows.length - a.rows.length)
+      .map((x) => ({ key: x.key, rows: x.rows }))
   }, [visible, groupBy, outCols])
 
   const bandCounts = useMemo(() => {
@@ -716,14 +730,14 @@ export function CrosscheckWorkspace({
               left={left}
               right={right}
               outCols={outCols}
-              groupBy={groupBy}
+              groupBy=""
               keyCount={keyCount}
               running={running}
               progress={progress}
               leftRows={left.rows.length}
               rightRows={right.rows.length}
               onOutColsChange={handleOutColsChange}
-              onGroupByChange={setGroupBy}
+              onGroupByChange={() => {}}
               onRun={runMatch}
               onCancel={cancel}
               onBack={() => setStage("fields")}
@@ -766,6 +780,8 @@ export function CrosscheckWorkspace({
             onSearchChange={setSearch}
             visible={visible}
             grouped={grouped}
+            groupByColumns={groupBy}
+            onGroupByColumnsChange={setGroupBy}
             bandCounts={bandCounts}
             running={running}
             progress={progress}

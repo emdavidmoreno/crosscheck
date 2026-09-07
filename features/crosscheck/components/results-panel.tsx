@@ -22,13 +22,21 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Mismatches } from "@/components/mismatches"
 import { ScoreCell } from "@/components/score-cell"
 import { ScoreSpectrum } from "@/components/score-spectrum"
 import { SectionHeader } from "@/components/section-header"
-import { BANDS, STRUCT, labelOf } from "@/constants/bands"
+import { labelOf } from "@/constants/bands"
 import { DEMO_LIMITS } from "@/constants/demo"
 import { download } from "@/lib/download"
 import { formatCell } from "@/lib/score"
@@ -63,22 +71,6 @@ function resolveSideValues(
     }
   })
   return out
-}
-
-function groupByKind(rows: FlatReportRow[]) {
-  const order = [...BANDS.map((b) => b.key), ...STRUCT.map((s) => s.key)]
-  const map = new Map<string, FlatReportRow[]>()
-  for (const r of rows) {
-    const list = map.get(r.kind) ?? []
-    list.push(r)
-    map.set(r.kind, list)
-  }
-  return order
-    .filter((k) => map.has(k))
-    .map((key) => ({
-      key: labelOf(key),
-      rows: map.get(key)!,
-    }))
 }
 
 function RunningSkeleton() {
@@ -126,8 +118,8 @@ export function ResultsPanel({
   visible = [],
   grouped = [],
   bandCounts = { b100: 0, b80: 0, b50: 0, b0: 0 },
-  groupByStatus: groupByStatusProp,
-  onGroupByStatusChange,
+  groupByColumns: groupByColumnsProp,
+  onGroupByColumnsChange,
   demoMode = false,
   onExportBlocked,
   onSubscribe,
@@ -160,18 +152,21 @@ export function ResultsPanel({
   visible?: FlatReportRow[]
   grouped?: { key: string | null; rows: FlatReportRow[] }[]
   bandCounts?: Record<string, number>
-  groupByStatus?: boolean
-  onGroupByStatusChange?: (v: boolean) => void
+  groupByColumns?: string[]
+  onGroupByColumnsChange?: (next: string[]) => void
   /** Guest/demo: export gated + skeleton placeholders for uncapped rows. */
   demoMode?: boolean
   onExportBlocked?: () => void
   onSubscribe?: () => void
 }) {
-  const [localGroupByStatus, setLocalGroupByStatus] = useState(false)
+  const [localGroupByColumns, setLocalGroupByColumns] = useState<string[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set()
+  )
 
-  const groupByStatus = groupByStatusProp ?? localGroupByStatus
-  const setGroupByStatus = onGroupByStatusChange ?? setLocalGroupByStatus
+  const groupByColumns = groupByColumnsProp ?? localGroupByColumns
+  const setGroupByColumns = onGroupByColumnsChange ?? setLocalGroupByColumns
 
   const status: ResultsPanelStatus =
     statusProp ??
@@ -204,13 +199,70 @@ export function ResultsPanel({
         : "Definí los campos y columnas, luego ejecutá el cruce."
     })()
 
+  const availableGroupBy = useMemo(
+    () =>
+      outCols.map((c) => ({
+        value: `${c.source}|${c.column}`,
+        label: `${c.column} (${c.source === "left" ? "A" : "B"})`,
+      })),
+    [outCols]
+  )
+
   const displayGroups = useMemo(() => {
-    if (groupByStatus) return groupByKind(visible)
-    return grouped
-  }, [groupByStatus, visible, grouped])
+    if (!groupByColumns.length) return grouped
+    const indexed = groupByColumns
+      .map((id) => ({
+        i: outCols.findIndex((c) => `${c.source}|${c.column}` === id),
+      }))
+      .filter((x) => x.i >= 0)
+    if (!indexed.length) return grouped
+    const map = new Map<string, { key: string; rows: FlatReportRow[] }>()
+    for (const r of visible) {
+      const parts = indexed.map(({ i }) => S(r.values[i]) || "(vacío)")
+      const id = JSON.stringify(parts)
+      const label = indexed
+        .map(({ i }, idx) => `${outCols[i]?.column}: ${parts[idx]}`)
+        .join(" · ")
+      const bucket = map.get(id)
+      if (bucket) bucket.rows.push(r)
+      else map.set(id, { key: label, rows: [r] })
+    }
+    return [...map.values()]
+      .sort((a, b) => b.rows.length - a.rows.length)
+      .map((x) => ({ key: x.key, rows: x.rows }))
+  }, [groupByColumns, grouped, outCols, visible])
+
+  const groupByLabel = useMemo(() => {
+    if (!groupByColumns.length) return "Sin agrupar"
+    if (groupByColumns.length === 1) {
+      return (
+        availableGroupBy.find((x) => x.value === groupByColumns[0])?.label ??
+        "1 columna"
+      )
+    }
+    return `${groupByColumns.length} columnas`
+  }, [availableGroupBy, groupByColumns])
+
+  const toggleGroupByColumn = (id: string, checked: boolean) => {
+    if (checked) {
+      if (groupByColumns.includes(id)) return
+      setGroupByColumns([...groupByColumns, id])
+      return
+    }
+    setGroupByColumns(groupByColumns.filter((x) => x !== id))
+  }
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleGroupCollapsed = (id: string) => {
+    setCollapsedGroups((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
@@ -420,20 +472,49 @@ export function ResultsPanel({
       />
 
       <div className="flex flex-wrap items-center gap-3">
-        <ToggleGroup
-          value={[groupByStatus ? "status" : "none"]}
-          onValueChange={(v) => {
-            const next = v[0] as "status" | "none" | undefined
-            if (next === "status") setGroupByStatus(true)
-            else if (next === "none") setGroupByStatus(false)
-          }}
-          variant="outline"
-          size="sm"
-          spacing={0}
-        >
-          <ToggleGroupItem value="none">Sin agrupar</ToggleGroupItem>
-          <ToggleGroupItem value="status">Agrupar por estado</ToggleGroupItem>
-        </ToggleGroup>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button size="sm" variant="outline" className="gap-1.5">
+                Agrupar por: {groupByLabel}
+                <ChevronDown className="size-3.5" />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="start">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Columnas del reporte</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {availableGroupBy.length ? (
+                availableGroupBy.map((item) => (
+                  <DropdownMenuCheckboxItem
+                    key={item.value}
+                    checked={groupByColumns.includes(item.value)}
+                    onCheckedChange={(v) =>
+                      toggleGroupByColumn(item.value, v === true)
+                    }
+                  >
+                    {item.label}
+                  </DropdownMenuCheckboxItem>
+                ))
+              ) : (
+                <DropdownMenuLabel className="py-2 text-xs">
+                  Sin columnas de salida para agrupar
+                </DropdownMenuLabel>
+              )}
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <Button
+              size="sm"
+              variant="ghost"
+              className="w-full justify-start"
+              onClick={() => setGroupByColumns([])}
+              disabled={!groupByColumns.length}
+            >
+              Limpiar agrupamiento
+            </Button>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <Input
           className="max-w-70"
@@ -479,19 +560,40 @@ export function ResultsPanel({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {displayGroups.map((g, gi) => (
-              <Fragment key={`g-${gi}-${g.key ?? "flat"}`}>
-                {g.key !== null ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={outCols.length + 3}
-                      className="bg-muted/60 font-mono text-[11px] tracking-wide text-muted-foreground uppercase"
-                    >
-                      {g.key} — {g.rows.length}
-                    </TableCell>
-                  </TableRow>
-                ) : null}
-                {g.rows.map((r, i) => {
+            {displayGroups.map((g, gi) => {
+              const groupId = `${gi}-${g.key ?? "flat"}`
+              const isCollapsed =
+                g.key !== null && collapsedGroups.has(groupId)
+              return (
+                <Fragment key={`g-${gi}-${g.key ?? "flat"}`}>
+                  {g.key !== null ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={outCols.length + 3}
+                        className="bg-muted/60 font-mono text-[11px] tracking-wide text-muted-foreground uppercase"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleGroupCollapsed(groupId)}
+                          className="flex w-full items-center gap-2 text-left"
+                          aria-expanded={!isCollapsed}
+                          aria-label={`Alternar grupo ${g.key}`}
+                        >
+                          <ChevronDown
+                            className={cn(
+                              "size-3.5 shrink-0 transition-transform duration-150",
+                              isCollapsed && "-rotate-90"
+                            )}
+                          />
+                          <span>
+                            {g.key} — {g.rows.length}
+                          </span>
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                  {!isCollapsed
+                    ? g.rows.map((r, i) => {
                   const rowId = `${gi}-${i}`
                   const isOpen = expanded.has(rowId)
                   const canExpand = Boolean(r.detail?.length || r.cands?.length)
@@ -591,9 +693,11 @@ export function ResultsPanel({
                       ) : null}
                     </Fragment>
                   )
-                })}
-              </Fragment>
-            ))}
+                })
+                    : null}
+                </Fragment>
+              )
+            })}
             {!visible.length ? (
               <TableRow>
                 <TableCell
